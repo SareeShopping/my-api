@@ -130,7 +130,7 @@ app.post("/forgot-password", async (req, res) => {
     await db.collection("password_otps").doc(username).set({ otp, email, createdAt: Date.now() });
     // Log OTP to console (for demo)
     console.log(`OTP for ${email}: ${otp}`);
-    res.status(200).json({ message: "OTP sent to email (check console in demo)." });
+    res.status(200).json({ message: "OTP sent to email (check console in demo).", otp });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
