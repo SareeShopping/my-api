@@ -15,6 +15,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Setup nodemailer transporter
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT || "587"),
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
 // ✅ POST
 app.post("/items", async (req, res) => {
   try {
@@ -56,23 +67,26 @@ app.delete("/items/:id", async (req, res) => {
   }
 });
 
-// ✅ REGISTER
+// ✅ REGISTER (now with email)
 app.post("/register", async (req, res) => {
-  const { name, phone, age, gender, username, password, confirmPassword } = req.body;
-  if (!name || !phone || !age || !gender || !username || !password || !confirmPassword) {
+  const { name, phone, age, gender, email, username, password, confirmPassword } = req.body;
+  if (!name || !phone || !age || !gender || !email || !username || !password || !confirmPassword) {
     return res.status(400).json({ error: "All fields are required." });
   }
   if (password !== confirmPassword) {
     return res.status(400).json({ error: "Passwords do not match." });
   }
   try {
-    // Check if username already exists
+    // Check if username or email already exists
     const userSnap = await db.collection("users").where("username", "==", username).get();
     if (!userSnap.empty) {
       return res.status(400).json({ error: "Username already taken." });
     }
-    // Store user (password in plaintext for demo; use hashing in production!)
-    await db.collection("users").add({ name, phone, age, gender, username, password });
+    const emailSnap = await db.collection("users").where("email", "==", email).get();
+    if (!emailSnap.empty) {
+      return res.status(400).json({ error: "Email already registered." });
+    }
+    await db.collection("users").add({ name, phone, age, gender, email, username, password });
     res.status(201).json({ message: "Registration successful." });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -94,6 +108,64 @@ app.post("/login", async (req, res) => {
     const user = userSnap.docs[0].data();
     delete user.password;
     res.status(200).json({ message: "Login successful.", user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ FORGOT PASSWORD (send OTP)
+app.post("/forgot-password", async (req, res) => {
+  const { email, username } = req.body;
+  if (!email || !username) {
+    return res.status(400).json({ error: "Email and username required." });
+  }
+  try {
+    const userSnap = await db.collection("users").where("username", "==", username).where("email", "==", email).get();
+    if (userSnap.empty) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Store OTP with expiry (5 min)
+    await db.collection("password_otps").doc(username).set({ otp, email, createdAt: Date.now() });
+    // Log OTP to console (for demo)
+    console.log(`OTP for ${email}: ${otp}`);
+    res.status(200).json({ message: "OTP sent to email (check console in demo)." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ RESET PASSWORD (with OTP)
+app.post("/reset-password", async (req, res) => {
+  const { email, username, otp, newPassword, confirmPassword } = req.body;
+  if (!email || !username || !otp || !newPassword || !confirmPassword) {
+    return res.status(400).json({ error: "All fields are required." });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: "Passwords do not match." });
+  }
+  try {
+    // Get OTP doc
+    const otpDoc = await db.collection("password_otps").doc(username).get();
+    if (!otpDoc.exists) {
+      return res.status(400).json({ error: "OTP not found or expired." });
+    }
+    const otpData = otpDoc.data();
+    // Check OTP and expiry (5 min)
+    if (otpData.email !== email || otpData.otp !== otp || Date.now() - otpData.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({ error: "Invalid or expired OTP." });
+    }
+    // Update password
+    const userSnap = await db.collection("users").where("username", "==", username).where("email", "==", email).get();
+    if (userSnap.empty) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    const userId = userSnap.docs[0].id;
+    await db.collection("users").doc(userId).update({ password: newPassword });
+    // Delete OTP doc
+    await db.collection("password_otps").doc(username).delete();
+    res.status(200).json({ message: "Password updated successfully." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
