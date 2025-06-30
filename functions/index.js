@@ -15,16 +15,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Setup nodemailer transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || "587"),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
 
 // ✅ POST
 app.post("/items", async (req, res) => {
